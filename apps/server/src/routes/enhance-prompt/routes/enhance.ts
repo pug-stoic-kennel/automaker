@@ -12,6 +12,8 @@ import { resolveModelString } from '@automaker/model-resolver';
 import {
   CLAUDE_MODEL_MAP,
   isCursorModel,
+  isOpencodeModel,
+  stripProviderPrefix,
   ThinkingLevel,
   getThinkingTokenBudget,
 } from '@automaker/types';
@@ -90,24 +92,30 @@ async function extractTextFromStream(
 }
 
 /**
- * Execute enhancement using Cursor provider
+ * Execute enhancement using a provider (Cursor, OpenCode, etc.)
  *
  * @param prompt - The enhancement prompt
- * @param model - The Cursor model to use
+ * @param model - The model to use
  * @returns The enhanced text
  */
-async function executeWithCursor(prompt: string, model: string): Promise<string> {
+async function executeWithProvider(prompt: string, model: string): Promise<string> {
   const provider = ProviderFactory.getProviderForModel(model);
+  // Strip provider prefix - providers expect bare model IDs
+  const bareModel = stripProviderPrefix(model);
 
   let responseText = '';
 
   for await (const msg of provider.executeQuery({
     prompt,
-    model,
+    model: bareModel,
     cwd: process.cwd(), // Enhancement doesn't need a specific working directory
     readOnly: true, // Prompt enhancement only generates text, doesn't write files
   })) {
-    if (msg.type === 'assistant' && msg.message?.content) {
+    if (msg.type === 'error') {
+      // Throw error with the message from the provider
+      const errorMessage = msg.error || 'Provider returned an error';
+      throw new Error(errorMessage);
+    } else if (msg.type === 'assistant' && msg.message?.content) {
       for (const block of msg.message.content) {
         if (block.type === 'text' && block.text) {
           responseText += block.text;
@@ -185,6 +193,7 @@ export function createEnhanceHandler(
         technical: prompts.enhancement.technicalSystemPrompt,
         simplify: prompts.enhancement.simplifySystemPrompt,
         acceptance: prompts.enhancement.acceptanceSystemPrompt,
+        'ux-reviewer': prompts.enhancement.uxReviewerSystemPrompt,
       };
       const systemPrompt = systemPromptMap[validMode];
 
@@ -208,7 +217,14 @@ export function createEnhanceHandler(
 
         // Cursor doesn't have a separate system prompt concept, so combine them
         const combinedPrompt = `${systemPrompt}\n\n${userPrompt}`;
-        enhancedText = await executeWithCursor(combinedPrompt, resolvedModel);
+        enhancedText = await executeWithProvider(combinedPrompt, resolvedModel);
+      } else if (isOpencodeModel(resolvedModel)) {
+        // Use OpenCode provider for OpenCode models (static and dynamic)
+        logger.info(`Using OpenCode provider for model: ${resolvedModel}`);
+
+        // OpenCode CLI handles the system prompt, so combine them
+        const combinedPrompt = `${systemPrompt}\n\n${userPrompt}`;
+        enhancedText = await executeWithProvider(combinedPrompt, resolvedModel);
       } else {
         // Use Claude SDK for Claude models
         logger.info(`Using Claude provider for model: ${resolvedModel}`);

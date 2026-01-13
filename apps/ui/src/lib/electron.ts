@@ -1,6 +1,6 @@
 // Type definitions for Electron IPC API
 import type { SessionListItem, Message } from '@/types/electron';
-import type { ClaudeUsageResponse } from '@/store/app-store';
+import type { ClaudeUsageResponse, CodexUsageResponse } from '@/store/app-store';
 import type {
   IssueValidationVerdict,
   IssueValidationConfidence,
@@ -433,11 +433,12 @@ export interface SpecRegenerationAPI {
     success: boolean;
     error?: string;
   }>;
-  stop: () => Promise<{ success: boolean; error?: string }>;
-  status: () => Promise<{
+  stop: (projectPath?: string) => Promise<{ success: boolean; error?: string }>;
+  status: (projectPath?: string) => Promise<{
     success: boolean;
     isRunning?: boolean;
     currentPhase?: string;
+    projectPath?: string;
     error?: string;
   }>;
   onEvent: (callback: (event: SpecRegenerationEvent) => void) => () => void;
@@ -459,7 +460,10 @@ export interface FeaturesAPI {
   update: (
     projectPath: string,
     featureId: string,
-    updates: Partial<Feature>
+    updates: Partial<Feature>,
+    descriptionHistorySource?: 'enhance' | 'edit',
+    enhancementMode?: 'improve' | 'technical' | 'simplify' | 'acceptance' | 'ux-reviewer',
+    preEnhancementDescription?: string
   ) => Promise<{ success: boolean; feature?: Feature; error?: string }>;
   delete: (projectPath: string, featureId: string) => Promise<{ success: boolean; error?: string }>;
   getAgentOutput: (
@@ -530,6 +534,9 @@ export interface AutoModeAPI {
     editedPlan?: string,
     feedback?: string
   ) => Promise<{ success: boolean; error?: string }>;
+  resumeInterrupted: (
+    projectPath: string
+  ) => Promise<{ success: boolean; message?: string; error?: string }>;
   onEvent: (callback: (event: AutoModeEvent) => void) => () => void;
 }
 
@@ -566,6 +573,7 @@ export interface ElectronAPI {
     mimeType: string,
     projectPath?: string
   ) => Promise<SaveImageResult>;
+  isElectron?: boolean;
   checkClaudeCli?: () => Promise<{
     success: boolean;
     status?: string;
@@ -605,86 +613,52 @@ export interface ElectronAPI {
     enhance: (
       originalText: string,
       enhancementMode: string,
-      model?: string
+      model?: string,
+      thinkingLevel?: string
     ) => Promise<{
       success: boolean;
       enhancedText?: string;
       error?: string;
     }>;
   };
-  setup?: {
-    getClaudeStatus: () => Promise<{
-      success: boolean;
-      status?: string;
-      installed?: boolean;
-      method?: string;
-      version?: string;
-      path?: string;
-      auth?: {
-        authenticated: boolean;
-        method: string;
-        hasCredentialsFile?: boolean;
-        hasToken?: boolean;
-        hasStoredOAuthToken?: boolean;
-        hasStoredApiKey?: boolean;
-        hasEnvApiKey?: boolean;
-        hasEnvOAuthToken?: boolean;
-      };
-      error?: string;
-    }>;
-    installClaude: () => Promise<{
-      success: boolean;
-      message?: string;
-      error?: string;
-    }>;
-    authClaude: () => Promise<{
-      success: boolean;
-      token?: string;
-      requiresManualAuth?: boolean;
-      terminalOpened?: boolean;
-      command?: string;
-      error?: string;
-      message?: string;
-      output?: string;
-    }>;
-    storeApiKey: (
-      provider: string,
-      apiKey: string
-    ) => Promise<{ success: boolean; error?: string }>;
-    deleteApiKey: (
-      provider: string
-    ) => Promise<{ success: boolean; error?: string; message?: string }>;
-    getApiKeys: () => Promise<{
-      success: boolean;
-      hasAnthropicKey: boolean;
-      hasGoogleKey: boolean;
-    }>;
-    getPlatform: () => Promise<{
-      success: boolean;
-      platform: string;
-      arch: string;
-      homeDir: string;
-      isWindows: boolean;
-      isMac: boolean;
-      isLinux: boolean;
-    }>;
-    verifyClaudeAuth: (authMethod?: 'cli' | 'api_key') => Promise<{
-      success: boolean;
-      authenticated: boolean;
-      error?: string;
-    }>;
-    getGhStatus?: () => Promise<{
-      success: boolean;
-      installed: boolean;
-      authenticated: boolean;
-      version: string | null;
-      path: string | null;
-      user: string | null;
-      error?: string;
-    }>;
-    onInstallProgress?: (callback: (progress: any) => void) => () => void;
-    onAuthProgress?: (callback: (progress: any) => void) => () => void;
+  templates?: {
+    clone: (
+      repoUrl: string,
+      projectName: string,
+      parentDir: string
+    ) => Promise<{ success: boolean; projectPath?: string; error?: string }>;
   };
+  backlogPlan?: {
+    generate: (
+      projectPath: string,
+      prompt: string,
+      model?: string
+    ) => Promise<{ success: boolean; error?: string }>;
+    stop: () => Promise<{ success: boolean; error?: string }>;
+    status: () => Promise<{ success: boolean; isRunning?: boolean; error?: string }>;
+    apply: (
+      projectPath: string,
+      plan: {
+        changes: Array<{
+          type: 'add' | 'update' | 'delete';
+          featureId?: string;
+          feature?: Record<string, unknown>;
+          reason: string;
+        }>;
+        summary: string;
+        dependencyUpdates: Array<{
+          featureId: string;
+          removedDependencies: string[];
+          addedDependencies: string[];
+        }>;
+      },
+      branchName?: string
+    ) => Promise<{ success: boolean; appliedChanges?: string[]; error?: string }>;
+    onEvent: (callback: (data: unknown) => void) => () => void;
+  };
+  // Setup API surface is implemented by the main process and mirrored by HttpApiClient.
+  // Keep this intentionally loose to avoid tight coupling between front-end and server types.
+  setup?: any;
   agent?: {
     start: (
       sessionId: string,
@@ -758,6 +732,100 @@ export interface ElectronAPI {
     }>;
   };
   ideation?: IdeationAPI;
+  codex?: {
+    getUsage: () => Promise<CodexUsageResponse>;
+    getModels: (refresh?: boolean) => Promise<{
+      success: boolean;
+      models?: Array<{
+        id: string;
+        label: string;
+        description: string;
+        hasThinking: boolean;
+        supportsVision: boolean;
+        tier: 'premium' | 'standard' | 'basic';
+        isDefault: boolean;
+      }>;
+      cachedAt?: number;
+      error?: string;
+    }>;
+  };
+  settings?: {
+    getStatus: () => Promise<{
+      success: boolean;
+      hasGlobalSettings: boolean;
+      hasCredentials: boolean;
+      dataDir: string;
+      needsMigration: boolean;
+    }>;
+    getGlobal: () => Promise<{
+      success: boolean;
+      settings?: Record<string, unknown>;
+      error?: string;
+    }>;
+    updateGlobal: (updates: Record<string, unknown>) => Promise<{
+      success: boolean;
+      settings?: Record<string, unknown>;
+      error?: string;
+    }>;
+    getCredentials: () => Promise<{
+      success: boolean;
+      credentials?: {
+        anthropic: { configured: boolean; masked: string };
+        google: { configured: boolean; masked: string };
+        openai: { configured: boolean; masked: string };
+      };
+      error?: string;
+    }>;
+    updateCredentials: (updates: {
+      apiKeys?: { anthropic?: string; google?: string; openai?: string };
+    }) => Promise<{
+      success: boolean;
+      credentials?: {
+        anthropic: { configured: boolean; masked: string };
+        google: { configured: boolean; masked: string };
+        openai: { configured: boolean; masked: string };
+      };
+      error?: string;
+    }>;
+    getProject: (projectPath: string) => Promise<{
+      success: boolean;
+      settings?: Record<string, unknown>;
+      error?: string;
+    }>;
+    updateProject: (
+      projectPath: string,
+      updates: Record<string, unknown>
+    ) => Promise<{
+      success: boolean;
+      settings?: Record<string, unknown>;
+      error?: string;
+    }>;
+    migrate: (data: Record<string, string>) => Promise<{
+      success: boolean;
+      migratedGlobalSettings: boolean;
+      migratedCredentials: boolean;
+      migratedProjectCount: number;
+      errors: string[];
+    }>;
+    discoverAgents: (
+      projectPath?: string,
+      sources?: Array<'user' | 'project'>
+    ) => Promise<{
+      success: boolean;
+      agents?: Array<{
+        name: string;
+        definition: {
+          description: string;
+          prompt: string;
+          tools?: string[];
+          model?: 'sonnet' | 'opus' | 'haiku' | 'inherit';
+        };
+        source: 'user' | 'project';
+        filePath: string;
+      }>;
+      error?: string;
+    }>;
+  };
 }
 
 // Note: Window interface is declared in @/types/electron.d.ts
@@ -789,11 +857,13 @@ export const isElectron = (): boolean => {
     return false;
   }
 
-  if ((window as any).isElectron === true) {
+  const w = window as any;
+
+  if (w.isElectron === true) {
     return true;
   }
 
-  return window.electronAPI?.isElectron === true;
+  return !!w.electronAPI?.isElectron;
 };
 
 // Check if backend server is available
@@ -1576,13 +1646,34 @@ function createMockWorktreeAPI(): WorktreeAPI {
       };
     },
 
-    openInEditor: async (worktreePath: string) => {
-      console.log('[Mock] Opening in editor:', worktreePath);
+    openInEditor: async (worktreePath: string, editorCommand?: string) => {
+      const ANTIGRAVITY_EDITOR_COMMAND = 'antigravity';
+      const ANTIGRAVITY_LEGACY_COMMAND = 'agy';
+      // Map editor commands to display names
+      const editorNameMap: Record<string, string> = {
+        cursor: 'Cursor',
+        code: 'VS Code',
+        zed: 'Zed',
+        subl: 'Sublime Text',
+        windsurf: 'Windsurf',
+        trae: 'Trae',
+        rider: 'Rider',
+        webstorm: 'WebStorm',
+        xed: 'Xcode',
+        studio: 'Android Studio',
+        [ANTIGRAVITY_EDITOR_COMMAND]: 'Antigravity',
+        [ANTIGRAVITY_LEGACY_COMMAND]: 'Antigravity',
+        open: 'Finder',
+        explorer: 'Explorer',
+        'xdg-open': 'File Manager',
+      };
+      const editorName = editorCommand ? (editorNameMap[editorCommand] ?? 'Editor') : 'VS Code';
+      console.log('[Mock] Opening in editor:', worktreePath, 'using:', editorName);
       return {
         success: true,
         result: {
-          message: `Opened ${worktreePath} in VS Code`,
-          editorName: 'VS Code',
+          message: `Opened ${worktreePath} in ${editorName}`,
+          editorName,
         },
       };
     },
@@ -1594,6 +1685,32 @@ function createMockWorktreeAPI(): WorktreeAPI {
         result: {
           editorName: 'VS Code',
           editorCommand: 'code',
+        },
+      };
+    },
+
+    getAvailableEditors: async () => {
+      console.log('[Mock] Getting available editors');
+      return {
+        success: true,
+        result: {
+          editors: [
+            { name: 'VS Code', command: 'code' },
+            { name: 'Finder', command: 'open' },
+          ],
+        },
+      };
+    },
+    refreshEditors: async () => {
+      console.log('[Mock] Refreshing available editors');
+      return {
+        success: true,
+        result: {
+          editors: [
+            { name: 'VS Code', command: 'code' },
+            { name: 'Finder', command: 'open' },
+          ],
+          message: 'Found 2 available editors',
         },
       };
     },
@@ -1651,6 +1768,47 @@ function createMockWorktreeAPI(): WorktreeAPI {
           hasPR: false,
           ghCliAvailable: false,
         },
+      };
+    },
+
+    getInitScript: async (projectPath: string) => {
+      console.log('[Mock] Getting init script:', { projectPath });
+      return {
+        success: true,
+        exists: false,
+        content: '',
+        path: `${projectPath}/.automaker/worktree-init.sh`,
+      };
+    },
+
+    setInitScript: async (projectPath: string, content: string) => {
+      console.log('[Mock] Setting init script:', { projectPath, content });
+      return {
+        success: true,
+        path: `${projectPath}/.automaker/worktree-init.sh`,
+      };
+    },
+
+    deleteInitScript: async (projectPath: string) => {
+      console.log('[Mock] Deleting init script:', { projectPath });
+      return {
+        success: true,
+      };
+    },
+
+    runInitScript: async (projectPath: string, worktreePath: string, branch: string) => {
+      console.log('[Mock] Running init script:', { projectPath, worktreePath, branch });
+      return {
+        success: true,
+        message: 'Init script started (mock)',
+      };
+    },
+
+    onInitScriptEvent: (callback) => {
+      console.log('[Mock] Subscribing to init script events');
+      // Return unsubscribe function
+      return () => {
+        console.log('[Mock] Unsubscribing from init script events');
       };
     },
   };
@@ -2004,6 +2162,11 @@ function createMockAutoModeAPI(): AutoModeAPI {
         feedback,
       });
       return { success: true };
+    },
+
+    resumeInterrupted: async (projectPath: string) => {
+      console.log('[Mock] Resume interrupted features for:', projectPath);
+      return { success: true, message: 'Mock: no interrupted features' };
     },
 
     onEvent: (callback: (event: AutoModeEvent) => void) => {
@@ -2435,7 +2598,7 @@ function createMockSpecRegenerationAPI(): SpecRegenerationAPI {
       return { success: true };
     },
 
-    stop: async () => {
+    stop: async (_projectPath?: string) => {
       mockSpecRegenerationRunning = false;
       mockSpecRegenerationPhase = '';
       if (mockSpecRegenerationTimeout) {
@@ -2445,7 +2608,7 @@ function createMockSpecRegenerationAPI(): SpecRegenerationAPI {
       return { success: true };
     },
 
-    status: async () => {
+    status: async (_projectPath?: string) => {
       return {
         success: true,
         isRunning: mockSpecRegenerationRunning,
@@ -2940,6 +3103,7 @@ export interface Project {
   path: string;
   lastOpened?: string;
   theme?: string; // Per-project theme override (uses ThemeMode from app-store)
+  isFavorite?: boolean; // Pin project to top of dashboard
 }
 
 export interface TrashedProject extends Project {

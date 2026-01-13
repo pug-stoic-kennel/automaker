@@ -15,7 +15,13 @@ export function useBoardPersistence({ currentProject }: UseBoardPersistenceProps
 
   // Persist feature update to API (replaces saveFeatures)
   const persistFeatureUpdate = useCallback(
-    async (featureId: string, updates: Partial<Feature>) => {
+    async (
+      featureId: string,
+      updates: Partial<Feature>,
+      descriptionHistorySource?: 'enhance' | 'edit',
+      enhancementMode?: 'improve' | 'technical' | 'simplify' | 'acceptance' | 'ux-reviewer',
+      preEnhancementDescription?: string
+    ) => {
       if (!currentProject) return;
 
       try {
@@ -25,7 +31,14 @@ export function useBoardPersistence({ currentProject }: UseBoardPersistenceProps
           return;
         }
 
-        const result = await api.features.update(currentProject.path, featureId, updates);
+        const result = await api.features.update(
+          currentProject.path,
+          featureId,
+          updates,
+          descriptionHistorySource,
+          enhancementMode,
+          preEnhancementDescription
+        );
         if (result.success && result.feature) {
           updateFeature(result.feature.id, result.feature);
         }
